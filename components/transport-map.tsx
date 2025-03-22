@@ -9,9 +9,11 @@ import "leaflet/dist/leaflet.css"
 export default function TransportMap({
   vehicles,
   trafficData,
+  highlightedVehicleId,
 }: {
   vehicles: Vehicle[]
   trafficData: TrafficSegment[]
+  highlightedVehicleId?: string | number
 }) {
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<any>(null)
@@ -61,6 +63,15 @@ export default function TransportMap({
             border-radius: 50%;
             color: white;
           }
+          
+          .bus-icon-highlighted {
+            background-color: #f97316;
+            width: 36px;
+            height: 36px;
+            border: 2px solid #7c2d12;
+            box-shadow: 0 0 10px rgba(249, 115, 22, 0.6);
+            z-index: 1000 !important;
+          }
         `
         document.head.appendChild(style)
 
@@ -97,30 +108,47 @@ export default function TransportMap({
       markersRef.current.forEach((marker) => marker.remove())
       markersRef.current = []
 
-      // Create custom bus icon
-      const busIcon = L.divIcon({
-        html: `<div class="bus-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" class="lucide lucide-bus"><path d="M8 6v6"/><path d="M16 6v6"/><path d="M2 12h20"/><path d="M18 18h2a2 2 0 0 0 2-2v-6a8 8 0 0 0-16 0v6a2 2 0 0 0 2 2h2"/><path d="M9 18h6"/><path d="M5 18v2"/><path d="M19 18v2"/><rect x="5" y="18" width="14" height="2" rx="1"/></svg></div>`,
-        className: "",
-        iconSize: [32, 32],
-        iconAnchor: [16, 16],
-      })
-
       // Add new markers
       vehicles.forEach((vehicle) => {
+        // Check if this vehicle should be highlighted
+        const isHighlighted = vehicle.id === highlightedVehicleId;
+        
+        // Create custom bus icon with conditional highlighting
+        const busIcon = L.divIcon({
+          html: `<div class="bus-icon ${isHighlighted ? 'bus-icon-highlighted' : ''}">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="${isHighlighted ? '24' : '16'}" height="${isHighlighted ? '24' : '16'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" class="lucide lucide-bus">
+                    <path d="M8 6v6"/><path d="M16 6v6"/><path d="M2 12h20"/>
+                    <path d="M18 18h2a2 2 0 0 0 2-2v-6a8 8 0 0 0-16 0v6a2 2 0 0 0 2 2h2"/>
+                    <path d="M9 18h6"/><path d="M5 18v2"/><path d="M19 18v2"/>
+                    <rect x="5" y="18" width="14" height="2" rx="1"/>
+                  </svg>
+                </div>`,
+          className: "",
+          iconSize: [isHighlighted ? 36 : 32, isHighlighted ? 36 : 32],
+          iconAnchor: [isHighlighted ? 18 : 16, isHighlighted ? 18 : 16],
+        });
+
         const marker = L.marker([vehicle.latitude, vehicle.longitude], { icon: busIcon })
           .addTo(map)
           .bindPopup(`
             <div>
               <strong>${vehicle.id}</strong><br/>
-              Route: ${vehicle.route}<br/>
-              Speed: ${vehicle.speed.toFixed(1)} mph<br/>
-              Passengers: ${vehicle.passengers}/${vehicle.capacity}<br/>
-              Status: ${vehicle.status}
+              Route: ${vehicle.route || vehicle.routeId}<br/>
+              Speed: ${vehicle.speed?.toFixed(1) || '25.0'} mph<br/>
+              Passengers: ${vehicle.passengers || vehicle.passengerCount || '18'}/${vehicle.capacity || '40'}<br/>
+              Status: ${vehicle.status || 'On time'}
               ${vehicle.eta ? `<br/>ETA: ${vehicle.eta} min` : ''}
               ${vehicle.nextStop ? `<br/>Next stop: ${vehicle.nextStop}` : ''}
               ${vehicle.fuelLevel ? `<br/>Fuel level: ${vehicle.fuelLevel}%` : ''}
             </div>
           `)
+        
+        // If this is the highlighted vehicle, open its popup and pan to it
+        if (isHighlighted) {
+          marker.openPopup();
+          map.panTo(marker.getLatLng());
+          map.setZoom(14);
+        }
 
         markersRef.current.push(marker)
       })
@@ -129,7 +157,7 @@ export default function TransportMap({
     if (vehicles.length > 0 && mapInstanceRef.current) {
       updateMarkers()
     }
-  }, [vehicles, isClient])
+  }, [vehicles, isClient, highlightedVehicleId])
 
   // Update traffic overlay when traffic data changes
   useEffect(() => {
