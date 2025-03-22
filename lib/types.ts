@@ -2,28 +2,31 @@
 
 export interface Vehicle {
   id: string
+  routeId: string
   route: string
   latitude: number
   longitude: number
   speed: number
   heading: number
   status: "on-time" | "delayed" | "out-of-service"
-  passengers: number
+  passengers?: number
+  passengerCount: number
   capacity: number
-  lastUpdated: Date
-  // Enhanced GPS data properties (optional since not all vehicles will have these initially)
-  eta?: number
-  nextStop?: string
-  fuelLevel?: number
+  fuelLevel: number
+  eta: number
+  currentStop: string
+  nextStop: string
+  routePath?: boolean
+  diverted?: boolean
 }
 
 export interface TrafficSegment {
   id: string
   name: string
-  congestionLevel: number // 0-1 scale
-  averageSpeed: number // mph
-  coordinates: [number, number][] // Array of [lat, lng] points
-  incidents?: Incident[]
+  congestionLevel: number // 0-1 value where 1 is most congested
+  averageSpeed: number
+  coordinates: [number, number][] // [lat, lng] points defining the segment
+  routeId: string
 }
 
 export interface Incident {
@@ -39,43 +42,38 @@ export interface Incident {
 
 export interface PassengerData {
   totalPassengers: number
-  byRoute: {
+  passengersByRoute: {
     routeId: string
-    passengers: number
-    capacity: number
-    occupancyRate: number
+    routeName: string
+    passengerCount: number
   }[]
-  byStation: {
-    stationId: string
-    waitingPassengers: number
-    boardingRate: number
-    averageWaitTime: number
+  passengersByHour: {
+    hour: number
+    passengerCount: number
   }[]
+  averageRideDistance: number
+  averageRideTime: number
 }
 
 export interface WeatherData {
-  location: string
-  condition: "clear" | "cloudy" | "rain" | "snow" | "fog"
+  condition: "clear" | "cloudy" | "rain" | "heavy_rain"
   temperature: number
-  precipitation: number
+  visibility: number // 0-1 value
   windSpeed: number
-  visibility: number
-  impact: "none" | "low" | "medium" | "high"
+  humidity: number
+  precipitationChance: number
 }
 
 export interface EventData {
   id: string
   name: string
   type: string
-  location: {
-    name: string
-    latitude: number
-    longitude: number
-  }
+  location: string
+  coordinates: [number, number]
+  trafficImpact: number // 0-1 value
   startTime: Date
   endTime: Date
-  estimatedAttendees: number
-  impact: "low" | "medium" | "high"
+  attendees: number
 }
 
 export interface Recommendation {
@@ -89,32 +87,33 @@ export interface Recommendation {
 
 export interface OptimizationResult {
   routeId: string
+  route: string
+  priority: "low" | "medium" | "high"
   originalRoute: string
   optimizedRoute: string
   reason: string
+  confidence: number
   impact: {
     travelTimeReduction: number
     waitTimeReduction: number
     fuelSavings: number
   }
-  confidence: number
+  type: "diversion" | "frequency"
 }
 
 export interface RouteData {
   id: string
   name: string
-  status: "normal" | "optimized" | "reduced"
-  activeVehicles: number
-  currentPassengers: number
-  averageDelay: number
+  stations: string[]
   congestionLevel: "low" | "medium" | "high"
-  stops: {
-    id: string
-    name: string
-    latitude: number
-    longitude: number
-    passengerCount: number
-  }[]
-  path: [number, number][] // Array of [lat, lng] points representing the route
+  averageCongestion: number
+  currentPassengers: number
+  averagePassengers: number
+  frequency: number // minutes between buses
+  routeColor: string
+  path: [number, number][] // Path coordinates
+  diverted: boolean
+  divertedPath?: [number, number][]
+  diversionReason?: string
 }
 

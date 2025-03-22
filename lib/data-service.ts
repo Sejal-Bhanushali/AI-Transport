@@ -25,6 +25,16 @@ const ROUTES = [
   { id: "9", name: "Taloja Industrial Express", color: "#ec4899" }, // pink
 ]
 
+// Define stations for each route
+const STATIONS = {
+  "42": ["Panvel Station", "Sector 10", "City Center", "Palm Beach", "CBD Belapur"],
+  "15": ["Panvel Station", "Kharghar Hills", "Kharghar Station", "Utsav Chowk", "Kamothe"],
+  "7": ["Panvel Station", "Orion Mall", "CIDCO Exhibition", "D-Mart Circle", "Kharghar"],
+  "33": ["New Panvel", "Kalamboli Circle", "Central Park", "Panvel Station"],
+  "21": ["Kalamboli", "Taloja MIDC", "Panvel Station", "Kamothe", "JNPT Road"],
+  "9": ["Panvel Station", "Taloja", "Taloja MIDC", "Navi Mumbai SEZ"],
+}
+
 // Generate route paths (simplified for demo)
 const generateRoutePath = (routeId: string): [number, number][] => {
   const paths: Record<string, [number, number][]> = {
@@ -82,6 +92,31 @@ const generateRoutePath = (routeId: string): [number, number][] => {
   return paths[routeId] || []
 }
 
+// Generate alternative route paths for diversions
+const generateDivertedRoutePath = (routeId: string): [number, number][] => {
+  const paths: Record<string, [number, number][]> = {
+    "42": [
+      // Diverted Downtown Express
+      [CITY_CENTER.lat + 0.03, CITY_CENTER.lng + 0.01], // Start diversion
+      [CITY_CENTER.lat + 0.02, CITY_CENTER.lng + 0.015],
+      [CITY_CENTER.lat + 0.01, CITY_CENTER.lng + 0.02],
+      [CITY_CENTER.lat, CITY_CENTER.lng + 0.01],
+      [CITY_CENTER.lat - 0.01, CITY_CENTER.lng],
+      [CITY_CENTER.lat - 0.03, CITY_CENTER.lng - 0.01], // Rejoin original
+    ],
+    "15": [
+      // Diverted University Line
+      [CITY_CENTER.lat + 0.02, CITY_CENTER.lng + 0.02], // Start diversion
+      [CITY_CENTER.lat + 0.025, CITY_CENTER.lng + 0.03],
+      [CITY_CENTER.lat + 0.03, CITY_CENTER.lng + 0.035],
+      [CITY_CENTER.lat + 0.035, CITY_CENTER.lng + 0.04],
+      [CITY_CENTER.lat + 0.04, CITY_CENTER.lng + 0.04], // Rejoin original
+    ],
+  }
+
+  return paths[routeId] || []
+}
+
 // Generate traffic segments based on route paths
 const generateTrafficSegments = (): TrafficSegment[] => {
   const segments: TrafficSegment[] = []
@@ -100,20 +135,7 @@ const generateTrafficSegments = (): TrafficSegment[] => {
         congestionLevel,
         averageSpeed: Math.max(5, 60 - congestionLevel * 55), // Speed decreases with congestion
         coordinates: [path[i], path[i + 1]],
-        incidents:
-          congestionLevel > 0.7
-            ? [
-                {
-                  id: `incident-${route.id}-${i}`,
-                  type: Math.random() > 0.5 ? "accident" : "construction",
-                  severity: congestionLevel > 0.8 ? "high" : "medium",
-                  latitude: (path[i][0] + path[i + 1][0]) / 2,
-                  longitude: (path[i][1] + path[i + 1][1]) / 2,
-                  description: `${congestionLevel > 0.8 ? "Major" : "Minor"} ${Math.random() > 0.5 ? "accident" : "construction"}`,
-                  startTime: new Date(Date.now() - Math.floor(Math.random() * 3600000)),
-                },
-              ]
-            : undefined,
+        routeId: route.id,
       })
     }
   })
@@ -121,49 +143,90 @@ const generateTrafficSegments = (): TrafficSegment[] => {
   return segments
 }
 
-// Generate vehicles along routes
+// Determine if a route should be diverted based on traffic
+const shouldDivertRoute = (routeId: string, trafficSegments: TrafficSegment[]): boolean => {
+  // Find segments for this route
+  const routeSegments = trafficSegments.filter(segment => segment.routeId === routeId);
+  
+  // Check if any segment has high congestion
+  const hasHighCongestion = routeSegments.some(segment => segment.congestionLevel > 0.7);
+  
+  // Only certain routes have diversion options in this demo
+  const hasDiversionOption = ["15", "42"].includes(routeId);
+  
+  return hasHighCongestion && hasDiversionOption;
+}
+
+// Generate simulated vehicles
 const generateVehicles = (): Vehicle[] => {
   const vehicles: Vehicle[] = []
-  const now = new Date()
-
+  const trafficSegments = generateTrafficSegments()
+  
+  // Create vehicles for each route
   ROUTES.forEach((route) => {
-    const path = generateRoutePath(route.id)
-    const vehicleCount = 4 + Math.floor(Math.random() * 4) // 4-7 vehicles per route
+    const routePath = generateRoutePath(route.id)
+    const shouldDivert = shouldDivertRoute(route.id, trafficSegments);
+    const divertedPath = shouldDivert ? generateDivertedRoutePath(route.id) : [];
+    
+    // Number of vehicles per route
+    const vehicleCount = 3 + Math.floor(Math.random() * 3) // 3-5 vehicles per route
 
     for (let i = 0; i < vehicleCount; i++) {
-      // Place vehicle somewhere along the route path
-      const pathIndex = Math.floor(Math.random() * (path.length - 1))
-      const startPoint = path[pathIndex]
-      const endPoint = path[pathIndex + 1]
-
-      // Interpolate position between points
+      const id = `${route.id}-${i + 1}`
+      
+      // Choose a random position along the route path
+      const pathIndex = Math.floor(Math.random() * (routePath.length - 1))
+      const [startLat, startLng] = routePath[pathIndex]
+      const [endLat, endLng] = routePath[pathIndex + 1]
+      
+      // Interpolate between points for more variety
       const progress = Math.random()
-      const lat = startPoint[0] + (endPoint[0] - startPoint[0]) * progress
-      const lng = startPoint[1] + (endPoint[1] - startPoint[1]) * progress
-
-      // Calculate heading (direction)
-      const heading = Math.atan2(endPoint[1] - startPoint[1], endPoint[0] - startPoint[0]) * (180 / Math.PI)
-
-      // Generate random status
-      const statusOptions: Vehicle["status"][] = ["on-time", "delayed", "out-of-service"]
-      const statusWeights = [0.7, 0.25, 0.05] // 70% on-time, 25% delayed, 5% out-of-service
-      const status = weightedRandom(statusOptions, statusWeights)
-
-      // Generate random passenger count
-      const capacity = 50
-      const passengers = Math.floor(Math.random() * capacity)
-
+      const lat = startLat + (endLat - startLat) * progress
+      const lng = startLng + (endLng - startLng) * progress
+      
+      // Status weighted by congestion
+      const routeSegments = trafficSegments.filter(seg => seg.routeId === route.id)
+      const avgCongestion = routeSegments.reduce((sum, seg) => sum + seg.congestionLevel, 0) / Math.max(1, routeSegments.length)
+      
+      // More congestion = more "delayed" vehicles
+      const statusWeights = [
+        avgCongestion < 0.4 ? 0.9 : avgCongestion < 0.7 ? 0.6 : 0.3, // on-time
+        avgCongestion < 0.4 ? 0.1 : avgCongestion < 0.7 ? 0.4 : 0.7, // delayed
+      ]
+      
+      const status = weightedRandom(["on-time", "delayed"], statusWeights)
+      
+      // Generate additional vehicle data
+      const passengerCapacity = 40 + Math.floor(Math.random() * 20) // 40-60 capacity
+      const passengerCount = Math.floor(Math.random() * passengerCapacity)
+      
+      // Get the next and current stop for this bus
+      const routeStations = STATIONS[route.id] || [];
+      const currentStopIndex = Math.floor(Math.random() * Math.max(1, routeStations.length - 1));
+      const nextStopIndex = (currentStopIndex + 1) % routeStations.length;
+      
+      // If vehicle is diverted, adjust next stop
+      const currentStop = routeStations[currentStopIndex] || "Unknown";
+      const nextStop = routeStations[nextStopIndex] || "Unknown";
+      
       vehicles.push({
-        id: `${route.id}-vehicle-${i}`,
-        route: route.id,
+        id,
+        routeId: route.id,
+        route: route.name,
         latitude: lat,
         longitude: lng,
-        speed: 15 + Math.random() * 30, // 15-45 mph
-        heading,
+        speed: Math.max(5, 60 - avgCongestion * 50), // Speed decreases with congestion
+        heading: Math.random() * 360,
         status,
-        passengers,
-        capacity,
-        lastUpdated: now,
+        passengers: passengerCount,
+        passengerCount,
+        capacity: passengerCapacity,
+        fuelLevel: 10 + Math.floor(Math.random() * 90), // 10-100%
+        eta: 3 + Math.floor(Math.random() * 28), // 3-30 minutes
+        currentStop,
+        nextStop,
+        routePath: true, // Flag that this vehicle has a route path
+        diverted: shouldDivert, // Flag if this vehicle is on a diverted route
       })
     }
   })
@@ -171,265 +234,283 @@ const generateVehicles = (): Vehicle[] => {
   return vehicles
 }
 
-// Helper function for weighted random selection
 function weightedRandom<T>(options: T[], weights: number[]): T {
-  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0)
-  let random = Math.random() * totalWeight
-
-  for (let i = 0; i < options.length; i++) {
-    random -= weights[i]
-    if (random <= 0) {
-      return options[i]
-    }
+  const cumulativeWeights: number[] = []
+  let sum = 0
+  
+  // Calculate cumulative weights
+  for (const weight of weights) {
+    sum += weight
+    cumulativeWeights.push(sum)
   }
-
-  return options[0] // Fallback
+  
+  // Get random value within total weight range
+  const random = Math.random() * sum
+  
+  // Find the index of the selected option
+  return options[cumulativeWeights.findIndex(w => random < w)]
 }
 
-// Generate passenger data
 const generatePassengerData = (): PassengerData => {
-  const byRoute = ROUTES.map((route) => {
-    const capacity = 200 + Math.floor(Math.random() * 300) // 200-500 capacity
-    const passengers = Math.floor(Math.random() * capacity)
-
-    return {
-      routeId: route.id,
-      passengers,
-      capacity,
-      occupancyRate: passengers / capacity,
-    }
-  })
-
-  const totalPassengers = byRoute.reduce((sum, route) => sum + route.passengers, 0)
-
-  // Generate station data
-  const stations = [
-    "Panvel Station Terminal",
-    "Kamothe Station",
-    "Kharghar Park",
-    "New Panvel Terminal",
-    "Kalamboli Central",
-    "Taloja Industrial Zone",
-  ]
-
-  const byStation = stations.map((station) => ({
-    stationId: station,
-    waitingPassengers: Math.floor(Math.random() * 100),
-    boardingRate: 10 + Math.floor(Math.random() * 20), // 10-30 passengers per minute
-    averageWaitTime: 2 + Math.floor(Math.random() * 8), // 2-10 minutes
-  }))
-
   return {
-    totalPassengers,
-    byRoute,
-    byStation,
+    totalPassengers: 2500 + Math.floor(Math.random() * 1500), // 2500-4000 total passengers
+    passengersByRoute: ROUTES.map((route) => ({
+      routeId: route.id,
+      routeName: route.name,
+      passengerCount: 300 + Math.floor(Math.random() * 500), // 300-800 per route
+    })),
+    passengersByHour: Array.from({ length: 24 }, (_, hour) => {
+      // Model morning and evening rush hours
+      let multiplier = 1
+      if (hour >= 7 && hour <= 9) multiplier = 3 // Morning rush
+      else if (hour >= 16 && hour <= 19) multiplier = 2.5 // Evening rush
+      else if (hour >= 22 || hour <= 5) multiplier = 0.2 // Late night / early morning
+      
+      return {
+        hour,
+        passengerCount: Math.floor(100 * multiplier + Math.random() * 50 * multiplier),
+      }
+    }),
+    averageRideDistance: 3 + Math.random() * 5, // 3-8 km
+    averageRideTime: 15 + Math.random() * 20, // 15-35 minutes
   }
 }
 
-// Fetch vehicle locations (simulated)
+// Function to get weather conditions
+const getWeatherConditions = (): WeatherData => {
+  const conditions = ["clear", "cloudy", "rain", "heavy_rain"]
+  const weights = [0.5, 0.3, 0.15, 0.05] // Weighted probability of each condition
+  
+  const condition = weightedRandom(conditions, weights)
+  const temperature = 25 + Math.random() * 10 - 5 // 20-30°C
+  
+  // Visibility based on conditions
+  let visibility: number
+  switch (condition) {
+    case "clear": visibility = 0.9 + Math.random() * 0.1; break // 90-100%
+    case "cloudy": visibility = 0.7 + Math.random() * 0.2; break // 70-90%
+    case "rain": visibility = 0.5 + Math.random() * 0.2; break // 50-70%
+    case "heavy_rain": visibility = 0.3 + Math.random() * 0.2; break // 30-50%
+    default: visibility = 1
+  }
+  
+  return {
+    condition,
+    temperature,
+    visibility,
+    windSpeed: Math.random() * 30, // 0-30 km/h
+    humidity: 40 + Math.random() * 50, // 40-90%
+    precipitationChance: condition === "clear" ? 0 : condition === "cloudy" ? 0.2 : 0.8,
+  }
+}
+
+// Simulated API calls
+
 export async function fetchVehicleLocations(): Promise<Vehicle[]> {
   // Simulate API delay
-  await new Promise((resolve) => setTimeout(resolve, 500))
-
+  await new Promise((resolve) => setTimeout(resolve, 200 + Math.random() * 300))
   return generateVehicles()
 }
 
-// Fetch traffic data (simulated)
 export async function fetchTrafficData(): Promise<TrafficSegment[]> {
   // Simulate API delay
-  await new Promise((resolve) => setTimeout(resolve, 700))
-
+  await new Promise((resolve) => setTimeout(resolve, 200 + Math.random() * 300))
   return generateTrafficSegments()
 }
 
-// Fetch passenger data (simulated)
 export async function fetchPassengerData(): Promise<PassengerData> {
   // Simulate API delay
-  await new Promise((resolve) => setTimeout(resolve, 600))
-
+  await new Promise((resolve) => setTimeout(resolve, 200 + Math.random() * 300))
   return generatePassengerData()
 }
 
-// Fetch weather data (simulated)
 export async function fetchWeatherData(): Promise<WeatherData> {
   // Simulate API delay
-  await new Promise((resolve) => setTimeout(resolve, 800))
-
-  const conditions: WeatherData["condition"][] = ["clear", "cloudy", "rain", "snow", "fog"]
-  const condition = conditions[Math.floor(Math.random() * conditions.length)]
-
-  let impact: WeatherData["impact"] = "none"
-  if (condition === "rain" || condition === "snow") {
-    impact = Math.random() > 0.5 ? "medium" : "high"
-  } else if (condition === "fog") {
-    impact = "medium"
-  } else if (condition === "cloudy") {
-    impact = "low"
-  }
-
-  return {
-    location: "City Center",
-    condition,
-    temperature: Math.floor(40 + Math.random() * 50), // 40-90°F
-    precipitation: condition === "rain" || condition === "snow" ? Math.random() * 0.5 : 0,
-    windSpeed: Math.floor(Math.random() * 20), // 0-20 mph
-    visibility: condition === "fog" ? 2 + Math.random() * 3 : 10, // miles
-    impact,
-  }
+  await new Promise((resolve) => setTimeout(resolve, 200 + Math.random() * 300))
+  return getWeatherConditions()
 }
 
-// Fetch events data (simulated)
+// Function to generate random events for the simulation
 export async function fetchEventsData(): Promise<EventData[]> {
   // Simulate API delay
-  await new Promise((resolve) => setTimeout(resolve, 900))
-
-  const events: EventData[] = []
-  const eventTypes = ["concert", "sports", "conference", "festival", "parade"]
+  await new Promise((resolve) => setTimeout(resolve, 200 + Math.random() * 300))
+  
+  // City locations
   const locations = [
-    { name: "Convention Center", lat: CITY_CENTER.lat + 0.02, lng: CITY_CENTER.lng + 0.01 },
-    { name: "Stadium", lat: CITY_CENTER.lat - 0.03, lng: CITY_CENTER.lng + 0.02 },
-    { name: "University Campus", lat: CITY_CENTER.lat + 0.04, lng: CITY_CENTER.lng + 0.04 },
-    { name: "City Park", lat: CITY_CENTER.lat - 0.01, lng: CITY_CENTER.lng - 0.03 },
+    { name: "Panvel Station", coordinates: [CITY_CENTER.lat, CITY_CENTER.lng] },
+    { name: "Kamothe", coordinates: [CITY_CENTER.lat + 0.04, CITY_CENTER.lng + 0.04] },
+    { name: "Kharghar", coordinates: [CITY_CENTER.lat + 0.06, CITY_CENTER.lng + 0.06] },
+    { name: "CBD Belapur", coordinates: [CITY_CENTER.lat - 0.05, CITY_CENTER.lng] },
+    { name: "New Panvel", coordinates: [CITY_CENTER.lat - 0.02, CITY_CENTER.lng + 0.06] },
   ]
-
-  // Generate 0-3 random events
-  const eventCount = Math.floor(Math.random() * 4)
-
+  
+  // Event types with impact on traffic
+  const eventTypes = [
+    { type: "concert", impact: 0.7 }, // High impact
+    { type: "sports", impact: 0.6 }, // Medium-high impact
+    { type: "festival", impact: 0.5 }, // Medium impact
+    { type: "construction", impact: 0.4 }, // Medium-low impact
+    { type: "roadwork", impact: 0.3 }, // Low impact
+  ]
+  
+  // Create random events
+  const eventCount = 1 + Math.floor(Math.random() * 3) // 1-3 events
+  const events: EventData[] = []
+  
   for (let i = 0; i < eventCount; i++) {
-    const eventType = eventTypes[Math.floor(Math.random() * eventTypes.length)]
     const location = locations[Math.floor(Math.random() * locations.length)]
-    const attendees = 500 + Math.floor(Math.random() * 9500) // 500-10000
-
-    let impact: EventData["impact"] = "low"
-    if (attendees > 5000) {
-      impact = "high"
-    } else if (attendees > 2000) {
-      impact = "medium"
-    }
-
-    // Event starts between now and 6 hours from now
-    const startTime = new Date(Date.now() + Math.floor(Math.random() * 6 * 3600000))
-    // Event lasts 1-4 hours
-    const endTime = new Date(startTime.getTime() + (1 + Math.floor(Math.random() * 4)) * 3600000)
-
+    const eventType = eventTypes[Math.floor(Math.random() * eventTypes.length)]
+    
     events.push({
-      id: `event-${i}`,
-      name: `${location.name} ${eventType.charAt(0).toUpperCase() + eventType.slice(1)}`,
-      type: eventType,
-      location: {
-        name: location.name,
-        latitude: location.lat,
-        longitude: location.lng,
-      },
-      startTime,
-      endTime,
-      estimatedAttendees: attendees,
-      impact,
+      id: `event-${i + 1}`,
+      name: `${location.name} ${eventType.type.charAt(0).toUpperCase() + eventType.type.slice(1)}`,
+      location: location.name,
+      coordinates: location.coordinates,
+      trafficImpact: eventType.impact + Math.random() * 0.2 - 0.1, // Add some randomness
+      startTime: new Date(new Date().getTime() + Math.random() * 1000 * 60 * 60 * 24), // Within next 24 hours
+      endTime: new Date(new Date().getTime() + Math.random() * 1000 * 60 * 60 * 48), // Within next 48 hours
+      attendees: 100 + Math.floor(Math.random() * 9900), // 100-10000 attendees
+      type: eventType.type,
     })
   }
-
+  
   return events
 }
 
-// Fetch route data (simulated)
+// Function to get route data
 export async function fetchRouteData(): Promise<RouteData[]> {
   // Simulate API delay
-  await new Promise((resolve) => setTimeout(resolve, 600))
-
-  return ROUTES.map((route) => {
-    const path = generateRoutePath(route.id)
-    const activeVehicles = 4 + Math.floor(Math.random() * 4) // 4-7 vehicles
-    const currentPassengers = 50 + Math.floor(Math.random() * 450) // 50-500 passengers
-    const averageDelay = Math.floor(Math.random() * 10) // 0-10 minutes
-
-    // Generate congestion level
+  await new Promise((resolve) => setTimeout(resolve, 200 + Math.random() * 300))
+  
+  // Generate route data
+  const routeData: RouteData[] = []
+  const trafficSegments = generateTrafficSegments()
+  
+  ROUTES.forEach((route) => {
+    // Get segments for this route
+    const segments = trafficSegments.filter((segment) => segment.routeId === route.id)
+    
+    // Calculate average congestion for the route
+    const totalCongestion = segments.reduce((sum, segment) => sum + segment.congestionLevel, 0)
+    const avgCongestion = segments.length ? totalCongestion / segments.length : 0
+    
+    // Classify congestion level
     let congestionLevel: "low" | "medium" | "high" = "low"
-    const congestionValue = Math.random()
-    if (congestionValue > 0.7) {
-      congestionLevel = "high"
-    } else if (congestionValue > 0.3) {
-      congestionLevel = "medium"
-    }
-
-    // Generate status
-    let status: RouteData["status"] = "normal"
-    if (congestionLevel === "high" && Math.random() > 0.5) {
-      status = "optimized"
-    } else if (congestionLevel === "low" && Math.random() > 0.7) {
-      status = "reduced"
-    }
-
-    // Generate stops
-    const stops = path.map((point, index) => ({
-      id: `${route.id}-stop-${index}`,
-      name: `${route.name} Stop ${index + 1}`,
-      latitude: point[0],
-      longitude: point[1],
-      passengerCount: Math.floor(Math.random() * 50), // 0-50 passengers waiting
-    }))
-
-    return {
+    if (avgCongestion > 0.7) congestionLevel = "high"
+    else if (avgCongestion > 0.4) congestionLevel = "medium"
+    
+    // Get the route path
+    const path = generateRoutePath(route.id)
+    
+    // Generate random passenger counts for this route
+    const averagePassengers = 200 + Math.floor(Math.random() * 300) // 200-500 average
+    
+    // Get diversion status
+    const shouldDivert = shouldDivertRoute(route.id, trafficSegments);
+    const divertedPath = shouldDivert ? generateDivertedRoutePath(route.id) : [];
+    
+    routeData.push({
       id: route.id,
       name: route.name,
-      status,
-      activeVehicles,
-      currentPassengers,
-      averageDelay,
+      stations: STATIONS[route.id] || [],
       congestionLevel,
-      stops,
+      averageCongestion: avgCongestion,
+      currentPassengers: Math.floor(averagePassengers * (1 + Math.random() * 0.5 - 0.25)), // +/- 25%
+      averagePassengers,
+      frequency: 10 + Math.floor(Math.random() * 20), // 10-30 minute frequency
+      routeColor: route.color,
       path,
-    }
+      diverted: shouldDivert,
+      divertedPath,
+      diversionReason: shouldDivert ? "High traffic congestion" : undefined,
+    })
   })
+  
+  return routeData
 }
 
-// Generate optimization recommendations (simulated)
+// Function to generate optimization recommendations
 export async function generateOptimizationRecommendations(): Promise<OptimizationResult[]> {
   // Simulate API delay
-  await new Promise((resolve) => setTimeout(resolve, 1000))
-
-  // Initialize the optimizer
-  const optimizer = new SmartTransitOptimizer()
-
-  // Generate recommendations for specific routes
-  const recommendations: OptimizationResult[] = [
-    {
-      routeId: "15",
-      originalRoute: "University Line: Main St → College Ave → University Blvd",
-      optimizedRoute: "University Line: Main St → Oak St → University Blvd",
-      reason: "Construction on College Ave causing 15-minute delays",
-      impact: {
-        travelTimeReduction: 12,
-        waitTimeReduction: 8,
-        fuelSavings: 320,
-      },
-      confidence: 92,
-    },
-    {
-      routeId: "9",
-      originalRoute: "Industrial Zone: Downtown → Highway 7 → Industrial Park",
-      optimizedRoute: "Industrial Zone: Downtown → Riverside Dr → Industrial Park",
-      reason: "Heavy traffic on Highway 7 during morning rush hour",
-      impact: {
-        travelTimeReduction: 8,
-        waitTimeReduction: 5,
-        fuelSavings: 180,
-      },
-      confidence: 87,
-    },
-    {
-      routeId: "42",
-      originalRoute: "Downtown Express: 15-minute frequency all day",
-      optimizedRoute: "Downtown Express: 10-minute frequency during peak hours, 20-minute off-peak",
-      reason: "Passenger demand varies significantly throughout the day",
-      impact: {
-        travelTimeReduction: 0,
-        waitTimeReduction: 12,
-        fuelSavings: 450,
-      },
-      confidence: 95,
-    },
-  ]
-
+  await new Promise((resolve) => setTimeout(resolve, 300 + Math.random() * 500))
+  
+  const routeData = await fetchRouteData()
+  const trafficSegments = await fetchTrafficData()
+  
+  // Generate recommendations for each route
+  const recommendations: OptimizationResult[] = []
+  
+  routeData.forEach((route) => {
+    const { id, name, averageCongestion, frequency } = route
+    
+    // Only generate recommendations for routes with specific issues
+    if (averageCongestion > 0.4 || (id === "15" || id === "42")) {
+      // Define optimization type based on conditions
+      let optimizationType: "diversion" | "frequency" = Math.random() > 0.5 ? "diversion" : "frequency"
+      let priority: "low" | "medium" | "high" = "medium"
+      
+      // Force specific recommendation types for specific routes
+      if (id === "15") optimizationType = "diversion"
+      if (id === "42") optimizationType = "frequency"
+      
+      // Prioritize based on congestion
+      if (averageCongestion > 0.7) priority = "high"
+      else if (averageCongestion < 0.4) priority = "low"
+      
+      const originalRoute = `${STATIONS[id]?.[0] || 'Start'} → ${STATIONS[id]?.[STATIONS[id]?.length - 1 || 0] || 'End'}`
+      let optimizedRoute = originalRoute
+      let reason = ""
+      let confidence = 75 + Math.floor(Math.random() * 21) // 75-95% confidence
+      
+      // Customize recommendation based on type
+      if (optimizationType === "diversion") {
+        // Generate diversion recommendation
+        const congestionLocation = STATIONS[id]?.[Math.floor(Math.random() * (STATIONS[id]?.length || 1))] || "location"
+        reason = `High traffic congestion near ${congestionLocation}`
+        
+        // Create diversion path description
+        const alternateRoute = [...(STATIONS[id] || [])]
+        if (alternateRoute.length > 3) {
+          const insertIndex = Math.floor(alternateRoute.length / 2)
+          alternateRoute.splice(insertIndex, 0, "Palm Beach Road") // Insert diversion point
+          optimizedRoute = `${alternateRoute[0]} → ${alternateRoute[insertIndex]} → ${alternateRoute[alternateRoute.length - 1]}`
+        }
+      } else {
+        // Generate frequency recommendation
+        const frequencyChange = averageCongestion > 0.6 ? 
+          Math.floor(frequency * 0.7) : // Increase frequency (lower minutes between buses)
+          Math.floor(frequency * 1.3)   // Decrease frequency
+          
+        reason = averageCongestion > 0.6 ?
+          `High passenger demand exceeding capacity` :
+          `Low utilization on this route`
+          
+        optimizedRoute = originalRoute // Same route, just different frequency
+      }
+      
+      // Generate impact data
+      const travelTimeReduction = 5 + Math.floor(Math.random() * 16) // 5-20 minutes saved
+      const waitTimeReduction = 3 + Math.floor(Math.random() * 8) // 3-10 minutes saved
+      const fuelSavings = 100 + Math.floor(Math.random() * 400) // ₹100-500 saved
+      
+      recommendations.push({
+        routeId: id,
+        route: name,
+        priority,
+        originalRoute,
+        optimizedRoute,
+        reason,
+        confidence,
+        impact: {
+          travelTimeReduction,
+          waitTimeReduction,
+          fuelSavings,
+        },
+        type: optimizationType,
+      })
+    }
+  })
+  
   return recommendations
 }
 

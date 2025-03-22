@@ -1,234 +1,445 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import type { Vehicle, TrafficSegment } from "@/lib/types"
-import "leaflet/dist/leaflet.css"
+import mapboxgl from "mapbox-gl"
+import "mapbox-gl/dist/mapbox-gl.css"
+import {
+  fetchVehicleLocations,
+  fetchTrafficData,
+  fetchRouteData,
+} from "@/lib/data-service"
+import type { Vehicle, TrafficSegment, RouteData } from "@/lib/types"
 
-// We're using Leaflet for the map
-// This is a client-side only component
+// Set your Mapbox token here (use a proper env variable in production)
+mapboxgl.accessToken = "pk.eyJ1IjoiZXhhbXBsZXVzZXIiLCJhIjoiY2xzNmt1bWs0MGJ2czJrbXVkbTgydWs4aCJ9.jxADiNYYvTWU0FsLsJ2rUw"
+
+interface TransportMapProps {
+  showRoutes?: boolean
+  showDiversions?: boolean
+  bookedVehicleId?: string
+}
+
 export default function TransportMap({
-  vehicles,
-  trafficData,
-  highlightedVehicleId,
-}: {
-  vehicles: Vehicle[]
-  trafficData: TrafficSegment[]
-  highlightedVehicleId?: string | number
-}) {
-  const mapRef = useRef<HTMLDivElement>(null)
-  const mapInstanceRef = useRef<any>(null)
-  const markersRef = useRef<any[]>([])
+  showRoutes = false,
+  showDiversions = false,
+  bookedVehicleId,
+}: TransportMapProps) {
+  const mapContainer = useRef<HTMLDivElement>(null)
+  const map = useRef<mapboxgl.Map | null>(null)
+  const markersRef = useRef<mapboxgl.Marker[]>([])
   const [isClient, setIsClient] = useState(false)
-
-  // Only run initialization on client side
+  
   useEffect(() => {
     setIsClient(true)
   }, [])
-
+  
+  // Initialize map
   useEffect(() => {
-    // Dynamic import of leaflet to avoid SSR issues
-    const initializeMap = async () => {
-      if (typeof window !== "undefined" && mapRef.current && !mapInstanceRef.current) {
-        // Dynamic import of leaflet
-        const L = (await import("leaflet")).default
-
-        // Create map instance
-        const map = L.map(mapRef.current).setView([19.0289, 73.1095], 13)
-
-        // Add OpenStreetMap tiles
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        }).addTo(map)
-
-        mapInstanceRef.current = map
-
-        // Create custom bus icon
-        const busIcon = L.divIcon({
-          html: `<div class="bus-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" class="lucide lucide-bus"><path d="M8 6v6"/><path d="M16 6v6"/><path d="M2 12h20"/><path d="M18 18h2a2 2 0 0 0 2-2v-6a8 8 0 0 0-16 0v6a2 2 0 0 0 2 2h2"/><path d="M9 18h6"/><path d="M5 18v2"/><path d="M19 18v2"/><rect x="5" y="18" width="14" height="2" rx="1"/></svg></div>`,
-          className: "",
-          iconSize: [24, 24],
-          iconAnchor: [12, 12],
-        })
-
-        // Add style for bus icon
-        const style = document.createElement("style")
-        style.textContent = `
-          .bus-icon {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 32px;
-            height: 32px;
-            background-color: #3b82f6;
-            border-radius: 50%;
-            color: white;
+    if (!isClient || !mapContainer.current) return
+    
+    // City center coordinates (Panvel, India)
+    const CITY_CENTER = {
+      lat: 19.0289,
+      lng: 73.1095,
+    }
+    
+    map.current = new mapboxgl.Map({
+      container: mapContainer.current,
+      style: "mapbox://styles/mapbox/streets-v12",
+      center: [CITY_CENTER.lng, CITY_CENTER.lat],
+      zoom: 13,
+    })
+    
+    // Add navigation controls
+    map.current.addControl(new mapboxgl.NavigationControl(), "top-right")
+    
+    // Clean up on unmount
+    return () => {
+      if (map.current) {
+        map.current.remove()
+        map.current = null
+      }
+    }
+  }, [isClient])
+  
+  // Update markers for vehicles
+  useEffect(() => {
+    if (!isClient || !map.current) return
+    
+    // Function to update vehicle markers
+    const updateVehicleMarkers = async () => {
+      if (!map.current) return
+      
+      try {
+        const vehicles = await fetchVehicleLocations()
+        
+        // Clear existing markers
+        markersRef.current.forEach((marker) => marker.remove())
+        markersRef.current = []
+        
+        // Add new markers for each vehicle
+        vehicles.forEach((vehicle) => {
+          // Create a custom HTML element for the marker
+          const el = document.createElement("div")
+          
+          // Check if this is the booked vehicle
+          const isBooked = bookedVehicleId && vehicle.id === bookedVehicleId
+          
+          // Style for normal vs. booked vehicle
+          if (isBooked) {
+            el.className = "vehicle-marker booked-vehicle"
+            el.innerHTML = `
+              <div class="relative">
+                <div class="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full animate-ping"></div>
+                <div class="bus-icon bg-blue-600 text-white">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 00-10.026 0 1.106 1.106 0 00-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
+                  </svg>
+                </div>
+              </div>
+            `
+          } else {
+            el.className = "vehicle-marker"
+            el.innerHTML = `
+              <div class="bus-icon ${vehicle.status === "delayed" ? "bg-amber-500" : "bg-green-600"} text-white">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 00-10.026 0 1.106 1.106 0 00-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
+                </svg>
+              </div>
+            `
           }
           
-          .bus-icon-highlighted {
-            background-color: #f97316;
-            width: 36px;
-            height: 36px;
-            border: 2px solid #7c2d12;
-            box-shadow: 0 0 10px rgba(249, 115, 22, 0.6);
-            z-index: 1000 !important;
+          // Add CSS to head if not already present
+          if (!document.getElementById("vehicle-marker-styles")) {
+            const style = document.createElement("style")
+            style.id = "vehicle-marker-styles"
+            style.innerHTML = `
+              .vehicle-marker {
+                cursor: pointer;
+              }
+              .bus-icon {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 24px;
+                height: 24px;
+                border-radius: 50%;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+              }
+              .booked-vehicle .bus-icon {
+                width: 30px;
+                height: 30px;
+                z-index: 10;
+              }
+            `
+            document.head.appendChild(style)
           }
-        `
-        document.head.appendChild(style)
-
-        // Add traffic congestion overlay
-        addTrafficOverlay(L, map, trafficData)
+          
+          // Create the marker
+          const marker = new mapboxgl.Marker({ element: el })
+            .setLngLat([vehicle.longitude, vehicle.latitude])
+            .addTo(map.current!)
+          
+          // Create popup with vehicle info
+          const popupContent = `
+            <div class="p-2">
+              <div class="font-bold">${vehicle.route}</div>
+              <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm mt-1">
+                <div>Status:</div>
+                <div class="${vehicle.status === "on-time" ? "text-green-600" : "text-amber-600"}">
+                  ${vehicle.status === "on-time" ? "On time" : "Delayed"}
+                </div>
+                <div>Passengers:</div>
+                <div>${vehicle.passengerCount}/${vehicle.capacity}</div>
+                <div>Speed:</div>
+                <div>${Math.round(vehicle.speed)} km/h</div>
+                <div>Fuel Level:</div>
+                <div>${vehicle.fuelLevel}%</div>
+                <div>Next Stop:</div>
+                <div>${vehicle.nextStop}</div>
+                <div>ETA:</div>
+                <div>${vehicle.eta} min</div>
+              </div>
+            </div>
+          `
+          
+          const popup = new mapboxgl.Popup({ offset: 25 }).setHTML(popupContent)
+          
+          marker.setPopup(popup)
+          
+          // Store marker for later removal
+          markersRef.current.push(marker)
+        })
+      } catch (error) {
+        console.error("Error fetching vehicle data:", error)
       }
     }
-
-    // Only initialize map on client side
-    if (isClient) {
-      initializeMap()
-    }
-
+    
+    // Initial update
+    updateVehicleMarkers()
+    
+    // Set interval to update markers periodically
+    const interval = setInterval(updateVehicleMarkers, 10000)
+    
+    // Clean up on unmount
     return () => {
-      if (mapInstanceRef.current) {
-        mapInstanceRef.current.remove()
-        mapInstanceRef.current = null
-      }
-    }
-  }, [isClient, trafficData])
-
-  // Update markers when vehicles data changes
-  useEffect(() => {
-    // Skip if not on client or if map isn't initialized
-    if (!isClient || !mapInstanceRef.current) return
-
-    const updateMarkers = async () => {
-      if (!mapInstanceRef.current) return
-
-      const L = (await import("leaflet")).default
-      const map = mapInstanceRef.current
-
-      // Remove existing markers
+      clearInterval(interval)
       markersRef.current.forEach((marker) => marker.remove())
       markersRef.current = []
-
-      // Add new markers
-      vehicles.forEach((vehicle) => {
-        // Check if this vehicle should be highlighted
-        const isHighlighted = vehicle.id === highlightedVehicleId;
-        
-        // Create custom bus icon with conditional highlighting
-        const busIcon = L.divIcon({
-          html: `<div class="bus-icon ${isHighlighted ? 'bus-icon-highlighted' : ''}">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="${isHighlighted ? '24' : '16'}" height="${isHighlighted ? '24' : '16'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" class="lucide lucide-bus">
-                    <path d="M8 6v6"/><path d="M16 6v6"/><path d="M2 12h20"/>
-                    <path d="M18 18h2a2 2 0 0 0 2-2v-6a8 8 0 0 0-16 0v6a2 2 0 0 0 2 2h2"/>
-                    <path d="M9 18h6"/><path d="M5 18v2"/><path d="M19 18v2"/>
-                    <rect x="5" y="18" width="14" height="2" rx="1"/>
-                  </svg>
-                </div>`,
-          className: "",
-          iconSize: [isHighlighted ? 36 : 32, isHighlighted ? 36 : 32],
-          iconAnchor: [isHighlighted ? 18 : 16, isHighlighted ? 18 : 16],
-        });
-
-        const marker = L.marker([vehicle.latitude, vehicle.longitude], { icon: busIcon })
-          .addTo(map)
-          .bindPopup(`
-            <div>
-              <strong>${vehicle.id}</strong><br/>
-              Route: ${vehicle.route || vehicle.routeId}<br/>
-              Speed: ${vehicle.speed?.toFixed(1) || '25.0'} mph<br/>
-              Passengers: ${vehicle.passengers || vehicle.passengerCount || '18'}/${vehicle.capacity || '40'}<br/>
-              Status: ${vehicle.status || 'On time'}
-              ${vehicle.eta ? `<br/>ETA: ${vehicle.eta} min` : ''}
-              ${vehicle.nextStop ? `<br/>Next stop: ${vehicle.nextStop}` : ''}
-              ${vehicle.fuelLevel ? `<br/>Fuel level: ${vehicle.fuelLevel}%` : ''}
-            </div>
-          `)
-        
-        // If this is the highlighted vehicle, open its popup and pan to it
-        if (isHighlighted) {
-          marker.openPopup();
-          map.panTo(marker.getLatLng());
-          map.setZoom(14);
-        }
-
-        markersRef.current.push(marker)
-      })
     }
-
-    if (vehicles.length > 0 && mapInstanceRef.current) {
-      updateMarkers()
-    }
-  }, [vehicles, isClient, highlightedVehicleId])
-
-  // Update traffic overlay when traffic data changes
+  }, [isClient, bookedVehicleId])
+  
+  // Update traffic overlay
   useEffect(() => {
-    // Skip if not on client or if map isn't initialized
-    if (!isClient || !mapInstanceRef.current) return
-
+    if (!isClient || !map.current) return
+    
+    let trafficLayerIdsToRemove: string[] = []
+    
+    // Function to update traffic overlay
     const updateTrafficOverlay = async () => {
-      if (!mapInstanceRef.current) return
-
-      const L = (await import("leaflet")).default
-      const map = mapInstanceRef.current
-
-      // Remove existing traffic layers
-      map.eachLayer((layer) => {
-        if (layer._path && layer.options.className === "traffic-segment") {
-          layer.remove()
-        }
-      })
-
-      // Add updated traffic overlay
-      addTrafficOverlay(L, map, trafficData)
-    }
-
-    if (trafficData.length > 0 && mapInstanceRef.current) {
-      updateTrafficOverlay()
-    }
-  }, [trafficData, isClient])
-
-  // Helper function to add traffic overlay
-  const addTrafficOverlay = (L: any, map: any, trafficData: TrafficSegment[]) => {
-    trafficData.forEach((segment) => {
-      // Create a line for each traffic segment
-      if (segment.coordinates && segment.coordinates.length >= 2) {
-        const color = getTrafficColor(segment.congestionLevel)
-
-        const line = L.polyline(segment.coordinates, {
-          color,
-          weight: 5,
-          opacity: 0.7,
-          className: "traffic-segment",
-        }).addTo(map)
-
-        line.bindPopup(`
-          <div>
-            <strong>${segment.name}</strong><br/>
-            Congestion: ${(segment.congestionLevel * 100).toFixed(0)}%<br/>
-            Avg. Speed: ${segment.averageSpeed.toFixed(1)} mph
-          </div>
-        `)
+      if (!map.current || !map.current.loaded()) return
+      
+      try {
+        const trafficData = await fetchTrafficData()
+        
+        // Remove existing layers
+        trafficLayerIdsToRemove.forEach((id) => {
+          if (map.current && map.current.getLayer(id)) {
+            map.current.removeLayer(id)
+          }
+          if (map.current && map.current.getSource(id)) {
+            map.current.removeSource(id)
+          }
+        })
+        
+        trafficLayerIdsToRemove = []
+        
+        // Add new traffic segments
+        trafficData.forEach((segment, index) => {
+          const segmentId = `traffic-segment-${index}`
+          
+          if (map.current && !map.current.getSource(segmentId)) {
+            map.current.addSource(segmentId, {
+              type: "geojson",
+              data: {
+                type: "Feature",
+                properties: {},
+                geometry: {
+                  type: "LineString",
+                  coordinates: [
+                    [segment.coordinates[0][1], segment.coordinates[0][0]],
+                    [segment.coordinates[1][1], segment.coordinates[1][0]],
+                  ],
+                },
+              },
+            })
+            
+            // Determine color based on congestion level
+            let color = "#22c55e" // green
+            let width = 4
+            
+            if (segment.congestionLevel > 0.7) {
+              color = "#ef4444" // red
+              width = 6
+            } else if (segment.congestionLevel > 0.4) {
+              color = "#f59e0b" // amber
+              width = 5
+            }
+            
+            map.current.addLayer({
+              id: segmentId,
+              type: "line",
+              source: segmentId,
+              layout: {
+                "line-join": "round",
+                "line-cap": "round",
+              },
+              paint: {
+                "line-color": color,
+                "line-width": width,
+                "line-opacity": 0.8,
+              },
+            })
+            
+            trafficLayerIdsToRemove.push(segmentId)
+          }
+        })
+      } catch (error) {
+        console.error("Error fetching traffic data:", error)
       }
-    })
-  }
-
-  // Helper function to get color based on congestion level
-  const getTrafficColor = (congestionLevel: number) => {
-    if (congestionLevel > 0.7) return "#ef4444" // Red for high congestion
-    if (congestionLevel > 0.4) return "#f59e0b" // Amber for medium congestion
-    return "#22c55e" // Green for low congestion
-  }
-
+    }
+    
+    // Wait for map to load before adding traffic data
+    if (map.current.loaded()) {
+      updateTrafficOverlay()
+    } else {
+      map.current.on("load", updateTrafficOverlay)
+    }
+    
+    // Set interval to update traffic overlay periodically
+    const interval = setInterval(updateTrafficOverlay, 30000)
+    
+    // Clean up on unmount
+    return () => {
+      clearInterval(interval)
+      
+      // Remove traffic layers
+      if (map.current) {
+        trafficLayerIdsToRemove.forEach((id) => {
+          if (map.current && map.current.getLayer(id)) {
+            map.current.removeLayer(id)
+          }
+          if (map.current && map.current.getSource(id)) {
+            map.current.removeSource(id)
+          }
+        })
+      }
+    }
+  }, [isClient])
+  
+  // Add route paths if enabled
+  useEffect(() => {
+    if (!isClient || !map.current || !showRoutes) return
+    
+    let routeLayerIdsToRemove: string[] = []
+    
+    // Function to update route paths
+    const updateRoutePaths = async () => {
+      if (!map.current || !map.current.loaded()) return
+      
+      try {
+        const routeData = await fetchRouteData()
+        
+        // Remove existing route layers
+        routeLayerIdsToRemove.forEach((id) => {
+          if (map.current && map.current.getLayer(id)) {
+            map.current.removeLayer(id)
+          }
+          if (map.current && map.current.getSource(id)) {
+            map.current.removeSource(id)
+          }
+        })
+        
+        routeLayerIdsToRemove = []
+        
+        // Add route paths
+        routeData.forEach((route) => {
+          // Only proceed if route has a path
+          if (route.path && route.path.length >= 2) {
+            const routeId = `route-${route.id}`
+            
+            // Convert path format to GeoJSON coordinates
+            const coordinates = route.path.map(point => [point[1], point[0]])
+            
+            if (map.current && !map.current.getSource(routeId)) {
+              map.current.addSource(routeId, {
+                type: "geojson",
+                data: {
+                  type: "Feature",
+                  properties: {},
+                  geometry: {
+                    type: "LineString",
+                    coordinates,
+                  },
+                },
+              })
+              
+              map.current.addLayer({
+                id: routeId,
+                type: "line",
+                source: routeId,
+                layout: {
+                  "line-join": "round",
+                  "line-cap": "round",
+                },
+                paint: {
+                  "line-color": route.routeColor || "#3b82f6",
+                  "line-width": 3,
+                  "line-opacity": 0.6,
+                  "line-dasharray": [1, 2],
+                },
+              })
+              
+              routeLayerIdsToRemove.push(routeId)
+            }
+            
+            // Add diverted route if available and diversions are enabled
+            if (showDiversions && route.diverted && route.divertedPath && route.divertedPath.length >= 2) {
+              const divertedRouteId = `route-${route.id}-diverted`
+              
+              // Convert diverted path format to GeoJSON coordinates
+              const divertedCoordinates = route.divertedPath.map(point => [point[1], point[0]])
+              
+              if (map.current && !map.current.getSource(divertedRouteId)) {
+                map.current.addSource(divertedRouteId, {
+                  type: "geojson",
+                  data: {
+                    type: "Feature",
+                    properties: {},
+                    geometry: {
+                      type: "LineString",
+                      coordinates: divertedCoordinates,
+                    },
+                  },
+                })
+                
+                map.current.addLayer({
+                  id: divertedRouteId,
+                  type: "line",
+                  source: divertedRouteId,
+                  layout: {
+                    "line-join": "round",
+                    "line-cap": "round",
+                  },
+                  paint: {
+                    "line-color": "#f97316", // orange for diverted routes
+                    "line-width": 4,
+                    "line-opacity": 0.8,
+                  },
+                })
+                
+                routeLayerIdsToRemove.push(divertedRouteId)
+              }
+            }
+          }
+        })
+      } catch (error) {
+        console.error("Error fetching route data:", error)
+      }
+    }
+    
+    // Wait for map to load before adding route data
+    if (map.current.loaded()) {
+      updateRoutePaths()
+    } else {
+      map.current.on("load", updateRoutePaths)
+    }
+    
+    // Clean up on unmount
+    return () => {
+      // Remove route layers
+      if (map.current) {
+        routeLayerIdsToRemove.forEach((id) => {
+          if (map.current && map.current.getLayer(id)) {
+            map.current.removeLayer(id)
+          }
+          if (map.current && map.current.getSource(id)) {
+            map.current.removeSource(id)
+          }
+        })
+      }
+    }
+  }, [isClient, showRoutes, showDiversions])
+  
   return (
-    <div>
-      {!isClient && (
-        <div className="flex items-center justify-center p-12 h-[500px]">
-          <p className="text-muted-foreground">Loading map...</p>
+    <div className="w-full h-full rounded-lg overflow-hidden">
+      {!isClient ? (
+        <div className="h-full w-full flex items-center justify-center bg-gray-100">
+          <p className="text-gray-500">Loading map...</p>
         </div>
+      ) : (
+        <div ref={mapContainer} className="h-full w-full" />
       )}
-      <div 
-        ref={mapRef} 
-        className={`w-full h-full min-h-[400px] ${!isClient ? 'hidden' : ''}`} 
-      />
     </div>
   )
 }

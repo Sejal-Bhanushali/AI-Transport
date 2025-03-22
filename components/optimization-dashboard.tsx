@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
@@ -11,32 +11,61 @@ import {
 } from "lucide-react"
 import type { OptimizationResult, RouteData, Vehicle } from "@/lib/types"
 import { TrafficPredictor } from "@/lib/route-optimizer"
+import { generateOptimizationRecommendations } from "@/lib/data-service"
 
 interface OptimizationDashboardProps {
-  vehicles: Vehicle[]
-  routes: RouteData[]
-  recommendations: OptimizationResult[]
-  actionableRecommendations: string[]
+  vehicles?: Vehicle[]
+  routes?: RouteData[]
+  recommendations?: OptimizationResult[]
+  actionableRecommendations?: string[]
 }
 
 export default function OptimizationDashboard({
-  vehicles,
-  routes,
-  recommendations,
-  actionableRecommendations,
+  vehicles = [],
+  routes = [],
+  recommendations = [],
+  actionableRecommendations = [],
 }: OptimizationDashboardProps) {
   const [activeTab, setActiveTab] = useState("recommendations")
   const [trafficPredictions, setTrafficPredictions] = useState<Record<string, number[]>>({})
   const [isClient, setIsClient] = useState(false)
+  const [optimizationData, setOptimizationData] = useState<OptimizationResult[]>([])
+  const initialRecommendationsRef = useRef(recommendations)
+  const [insightsList, setInsightsList] = useState<string[]>([
+    "Increase fleet size by 3 vehicles during morning peak hours (7-9 AM)",
+    "Schedule maintenance for low-demand periods (11 AM-2 PM)",
+    "Add express service for Route 42 during evening rush hour",
+    "Reduce frequency on Route 7 during mid-day to save fuel",
+    "Consider route extension to newly developed Sector 12",
+    "Deploy additional buses on Route 15 to handle weekend demand"
+  ])
   
   useEffect(() => {
     // Mark that we're on the client
     setIsClient(true)
     
     // Initialize traffic predictor only on the client side
-    const predictor = new TrafficPredictor()
-    setTrafficPredictions(predictor.getPredictions())
-  }, [])
+    if (typeof window !== 'undefined') {
+      const predictor = new TrafficPredictor()
+      setTrafficPredictions(predictor.getPredictions())
+      
+      // Load optimization data if none provided
+      const loadRecommendations = async () => {
+        if (initialRecommendationsRef.current.length === 0) {
+          try {
+            const data = await generateOptimizationRecommendations()
+            setOptimizationData(data)
+          } catch (error) {
+            console.error("Error loading optimization recommendations:", error)
+          }
+        } else {
+          setOptimizationData(initialRecommendationsRef.current)
+        }
+      }
+      
+      loadRecommendations()
+    }
+  }, []) // Remove recommendations from dependency array
   
   // Priority colors
   const priorityColors = {
@@ -86,7 +115,7 @@ export default function OptimizationDashboard({
         {/* Route Recommendations Tab */}
         <TabsContent value="recommendations" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
-            {recommendations.map((recommendation, index) => (
+            {optimizationData.map((recommendation, index) => (
               <Card key={index}>
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
@@ -147,6 +176,12 @@ export default function OptimizationDashboard({
                 </CardContent>
               </Card>
             ))}
+            
+            {optimizationData.length === 0 && (
+              <div className="col-span-2 flex justify-center p-8">
+                <p className="text-muted-foreground">Loading optimization recommendations...</p>
+              </div>
+            )}
           </div>
         </TabsContent>
         
@@ -155,8 +190,7 @@ export default function OptimizationDashboard({
           {isClient ? (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {Object.entries(trafficPredictions).map(([routeId, predictions]) => {
-                const route = routes.find(r => r.id === routeId)
-                if (!route) return null
+                const routeName = `Route ${routeId}`
                 
                 // Get current hour (client-side only)
                 const hourNow = new Date().getHours()
@@ -167,7 +201,7 @@ export default function OptimizationDashboard({
                       <CardTitle className="text-lg">
                         <div className="flex items-center">
                           <MapPin className="mr-2 h-5 w-5 text-blue-600" />
-                          {route.name}
+                          {routeName}
                         </div>
                       </CardTitle>
                       <CardDescription>
@@ -231,6 +265,12 @@ export default function OptimizationDashboard({
                   </Card>
                 )
               })}
+              
+              {Object.keys(trafficPredictions).length === 0 && (
+                <div className="col-span-3 flex justify-center p-8">
+                  <p className="text-muted-foreground">Initializing traffic predictions...</p>
+                </div>
+              )}
             </div>
           ) : (
             <div className="flex items-center justify-center p-12">
@@ -249,113 +289,34 @@ export default function OptimizationDashboard({
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <ul className="space-y-3">
-                {actionableRecommendations.map((recommendation, index) => (
-                  <li key={index} className="flex items-start border-b pb-3 last:border-0 last:pb-0">
-                    <div className="mr-3 pt-1">
-                      <AlertCircle className="h-5 w-5 text-blue-600" />
+              <div className="space-y-4">
+                {insightsList.map((insight, index) => (
+                  <div key={index} className="flex items-start space-x-3 p-3 bg-slate-50 rounded-md">
+                    <div className="mt-0.5">
+                      {index % 3 === 0 ? (
+                        <AlertCircle className="h-5 w-5 text-red-500" />
+                      ) : index % 3 === 1 ? (
+                        <TrendingUp className="h-5 w-5 text-blue-500" />
+                      ) : (
+                        <Bus className="h-5 w-5 text-green-500" />
+                      )}
                     </div>
                     <div>
-                      <p>{recommendation}</p>
+                      <p className="font-medium">{insight}</p>
+                      <div className="flex items-center mt-2">
+                        <Badge variant="outline" className="mr-2">
+                          {index % 3 === 0 ? "High Impact" : index % 3 === 1 ? "Medium Impact" : "Low Impact"}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {index % 2 === 0 ? "Short term" : "Long term"}
+                        </span>
+                      </div>
                     </div>
-                  </li>
+                  </div>
                 ))}
-              </ul>
+              </div>
             </CardContent>
           </Card>
-          
-          <div className="grid gap-4 md:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>Fleet Status Overview</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="rounded-lg border p-3">
-                      <div className="text-sm text-muted-foreground">Total Vehicles</div>
-                      <div className="text-2xl font-bold">{vehicles.length}</div>
-                    </div>
-                    <div className="rounded-lg border p-3">
-                      <div className="text-sm text-muted-foreground">Active Routes</div>
-                      <div className="text-2xl font-bold">{routes.length}</div>
-                    </div>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium">Vehicle Status</div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="rounded-lg bg-green-100 p-2 text-center">
-                        <div className="text-sm text-green-800">On Time</div>
-                        <div className="text-lg font-bold text-green-900">
-                          {vehicles.filter(v => v.status === "on-time").length}
-                        </div>
-                      </div>
-                      <div className="rounded-lg bg-amber-100 p-2 text-center">
-                        <div className="text-sm text-amber-800">Delayed</div>
-                        <div className="text-lg font-bold text-amber-900">
-                          {vehicles.filter(v => v.status === "delayed").length}
-                        </div>
-                      </div>
-                      <div className="rounded-lg bg-red-100 p-2 text-center">
-                        <div className="text-sm text-red-800">Out of Service</div>
-                        <div className="text-lg font-bold text-red-900">
-                          {vehicles.filter(v => v.status === "out-of-service").length}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            
-            <Card>
-              <CardHeader>
-                <CardTitle>Congestion Overview</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="rounded-lg bg-green-100 p-2 text-center">
-                      <div className="text-sm text-green-800">Low Traffic</div>
-                      <div className="text-lg font-bold text-green-900">
-                        {routes.filter(r => r.congestionLevel === "low").length}
-                      </div>
-                    </div>
-                    <div className="rounded-lg bg-amber-100 p-2 text-center">
-                      <div className="text-sm text-amber-800">Medium Traffic</div>
-                      <div className="text-lg font-bold text-amber-900">
-                        {routes.filter(r => r.congestionLevel === "medium").length}
-                      </div>
-                    </div>
-                    <div className="rounded-lg bg-red-100 p-2 text-center">
-                      <div className="text-sm text-red-800">High Traffic</div>
-                      <div className="text-lg font-bold text-red-900">
-                        {routes.filter(r => r.congestionLevel === "high").length}
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <div className="text-sm font-medium mb-2">Routes with Highest Congestion</div>
-                    <ul className="space-y-2">
-                      {routes
-                        .filter(r => r.congestionLevel === "high")
-                        .slice(0, 3)
-                        .map(route => (
-                          <li key={route.id} className="flex items-center justify-between rounded-md border px-3 py-2">
-                            <div className="font-medium">{route.name}</div>
-                            <Badge variant="outline" className="bg-red-100 text-red-800 border-red-300">
-                              High
-                            </Badge>
-                          </li>
-                        ))}
-                    </ul>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
         </TabsContent>
       </Tabs>
     </div>
